@@ -24,10 +24,20 @@ const long SERIAL_BAUD_RATE = 115200L;
 // used as the CS pin, the hardware CS pin (10 on most Arduino boards,
 // 53 on the Mega) must be left as an output or the SD library
 // functions will not work.
-const int chipSelect = 4;
-const char FILE_NAME[] = "colorall.txt";
+const int DEFAULT_CHIP_SELECT_PIN = 10;
+const int CHIP_SELECT = 4;
+// Color Definition File Syntax
+//  Each line in the file that is used to define the color patterns uses the following syntax:
+// <RED, 0-255>|<GREEN, 0-255>|<BLUE, 0-255>&[T<RED, 0-255>|<GREEN, 0-255>|<BLUE, 0-255>$]
+// Up to MAX_LED_COUNT worth of lines will be sent to the LED Strip even if they are not hooked up
+// Numerical input outside 0-255 is constrained to inside the bounds.
+// If parsing fails at any time, all parsing will cease and an error will be printed to Serial
+
+// Delimiters used for file structure
 const char COLOR_DELIMITER = '|';
 const char SET_DELIMITER = '&';
+const char TRANSITION_COLOR_DELIMITER = 'T';
+const char TRANSITION_SET_DELIMITER = '$';
 
 // LED Strip Prep
 // Structure in this sketch adapted from Pololu LED Strip example LedStripColorTester
@@ -37,13 +47,6 @@ const int LED_STRIP_PIN = 9;               // Strip input is on Pin 9
 PololuLedStrip<LED_STRIP_PIN> ledStrip;    // Create an ledStrip object on pin X.
 const int MAX_LED_COUNT = 10;                  // Project requires MAX_LED_COUNT LEDs
 rgb_color colors[MAX_LED_COUNT];
-const rgb_color C_RED(0,0,255);  
-const rgb_color C_ORANGE(255,0,255); 
-const rgb_color C_YELLOW(255,0,100);
-const rgb_color C_GREEN(255,0,0);
-const rgb_color C_INDIGO(25,255,0);
-const rgb_color C_VIOLET(0,255,255);
-const rgb_color C_WHITE(255,200,100);
 const rgb_color C_OFF(0,0,0);
 
 /* ------------------------------------------------------------------------------- */
@@ -56,68 +59,39 @@ void setup()
   Serial.begin(SERIAL_BAUD_RATE);
   
   // Initialize the file buffer and position
+  char fileName[] = "colordef.txt";
   String fileBuffer = "";
         
-  Serial.println(F("Initializing SD card..."));
-  // make sure that the default chip select pin is set to
-  // output, even if you don't use it:
-  pinMode(10, OUTPUT);
+  if (GetFileFromSD(fileName, fileBuffer))
+  {
+    // Parse File contents
+    // TODO: Add more file validation
+    // Initialize the array of colors
+    for(int x=0;x<MAX_LED_COUNT;x++)
+    {
+      colors[x]  = C_OFF;
+    }
+    int ledCounter = 0;          // Counts LEDs, ensures no more than MAX_LED_COUNT are read from the file
+    int nextSetLocation = 0;     // Tracks where the last set delimiter was encountered
+    int nextColorLocation = 0;   // Tracks where the last color delimiter was encountered in the 'current set'
+    String currentSet = "";      // String to track the current set of LEDs being read from the file
   
-  // see if the card is present and can be initialized:
-  if (!SD.begin(chipSelect)) {
-    Serial.println(F("Card failed, or not present"));
-        // don't do anything more:
+    do
+    {
+      currentSet = fileBuffer.substring(nextSetLocation,fileBuffer.indexOf(SET_DELIMITER,nextSetLocation));
+      nextSetLocation = fileBuffer.indexOf(SET_DELIMITER,nextSetLocation)+1;
+      Serial.println(currentSet);
+      
+      colors[ledCounter].red = currentSet.substring(0,currentSet.indexOf(COLOR_DELIMITER)).toInt();
+      nextColorLocation = currentSet.indexOf(COLOR_DELIMITER)+1;
+      colors[ledCounter].green = currentSet.substring(nextColorLocation, currentSet.indexOf(COLOR_DELIMITER, nextColorLocation)).toInt();
+      nextColorLocation = currentSet.indexOf(COLOR_DELIMITER,nextColorLocation)+1;
+      colors[ledCounter].blue = currentSet.substring(nextColorLocation).toInt();    
+      
+      ledCounter++;
+    } while ((nextSetLocation != fileBuffer.lastIndexOf(SET_DELIMITER)) && (ledCounter < MAX_LED_COUNT));
   }
-  else
-  {
-    Serial.println(F("card initialized."));
   
-    // open the file. note that only one file can be open at a time,
-    // so you have to close this one before opening another.
-    File dataFile = SD.open(FILE_NAME);
-
-    // if the file is available, read from it:
-    if (dataFile) {
-      while (dataFile.available()) {
-        fileBuffer += char(dataFile.read());
-      }
-      dataFile.close();
-    }  
-    // if the file isn't open, pop up an error:
-    else {
-      Serial.println(F("error opening file"));
-    } 
-  }
-
-  Serial.println(fileBuffer);
-
-  // Parse File contents
-  // TODO: Add more file validation
-  // Initialize the array of colors
-  for(int x=0;x<MAX_LED_COUNT;x++)
-  {
-    colors[x]  = C_OFF;
-  }
-  int ledCounter = 0;          // Counts LEDs, ensures no more than MAX_LED_COUNT are read from the file
-  int nextSetLocation = 0;     // Tracks where the last set delimiter was encountered
-  int nextColorLocation = 0;   // Tracks where the last color delimiter was encountered in the 'current set'
-  String currentSet = "";      // String to track the current set of LEDs being read from the file
-
-  do
-  {
-    currentSet = fileBuffer.substring(nextSetLocation,fileBuffer.indexOf(SET_DELIMITER,nextSetLocation));
-    nextSetLocation = fileBuffer.indexOf(SET_DELIMITER,nextSetLocation)+1;
-    Serial.println(currentSet);
-    
-    colors[ledCounter].green = currentSet.substring(0,currentSet.indexOf(COLOR_DELIMITER)).toInt();
-    nextColorLocation = currentSet.indexOf(COLOR_DELIMITER)+1;
-    colors[ledCounter].blue = currentSet.substring(nextColorLocation, currentSet.indexOf(COLOR_DELIMITER, nextColorLocation)).toInt();
-    nextColorLocation = currentSet.indexOf(COLOR_DELIMITER,nextColorLocation)+1;
-    colors[ledCounter].red = currentSet.substring(nextColorLocation).toInt();    
-    
-    ledCounter++;
-  } while ((nextSetLocation != fileBuffer.lastIndexOf(SET_DELIMITER)) && (ledCounter < MAX_LED_COUNT));
-
   // Write to the LED Strip  
   Serial.println(F("Starting to write to the strip."));
   ledStrip.write(colors, MAX_LED_COUNT);  
@@ -128,6 +102,7 @@ void setup()
   Serial.println("Set range is 1 to " + MAX_LED_COUNT);
   Serial.println(F("Color range is 0-255"));
 }
+
 /* ------------------------------------------------------------------------------- */
 /// void loop
 /// Author: RangerDan
@@ -135,6 +110,8 @@ void setup()
 /* ------------------------------------------------------------------------------- */
 void loop()
 {
+  // TODO: Add the ability to pull different file names off the card through Serial
+  // TODO: Test if GetFileFromSD works with multiple files per session
   while (Serial.available() > 0)
   {  
     int set = Serial.parseInt();
@@ -142,24 +119,63 @@ void loop()
     int green = Serial.parseInt(); 
     int blue = Serial.parseInt(); 
     
-    Serial.print("Set: ");
-   Serial.print(set);// + " Red: " + red + " Green: " + green + " Blue: " + blue);
+   Serial.println(set);
+   Serial.println(red);
+   Serial.println(green);
+   Serial.println(blue);
 
     // look for the newline. That's the end of your
     // sentence:
     if (Serial.read() == '\n')
     {
-      // constrain the values to 0 - 255 and invert
-      // if you're using a common-cathode LED, just use "constrain(color, 0, 255);"
-      set = constrain(set, 1, MAX_LED_COUNT);
-      colors[set].red = constrain(red, 0, 255);
+      set = constrain(set, 1, MAX_LED_COUNT)-1;      // Constrained, mapped to zero-indexed array
+      colors[set].red = constrain(red, 0, 255);      // Constrained to range of colors on LEDs
       colors[set].green = constrain(green, 0, 255);
       colors[set].blue = constrain(blue, 0, 255);
+      
+      Serial.println(F("Starting to write to the strip."));
+      ledStrip.write(colors, MAX_LED_COUNT);  
+      Serial.println(F("Done writing to strip."));
     }
-    
-    Serial.println(F("Starting to write to the strip."));
-    ledStrip.write(colors, MAX_LED_COUNT);  
-    Serial.println(F("Done writing to strip."));
   }  
 }
 
+boolean GetFileFromSD(char* fileName, String& fileBuffer)
+{
+  Serial.println(F("Initializing SD card..."));
+  // make sure that the default chip select pin is set to
+  // output, even if you don't use it:
+  pinMode(DEFAULT_CHIP_SELECT_PIN, OUTPUT);
+  
+  // see if the card is present and can be initialized:
+  if (!SD.begin(CHIP_SELECT))
+  {
+    Serial.println(F("Card failed, or not present"));
+    return false;
+  }
+  else
+  {
+    Serial.println(F("Card initialized"));
+    
+    // Attempt to open the file
+    File dataFile = SD.open(fileName);
+
+    // if the file is available, read from it:
+    if (!dataFile)
+    {
+      Serial.println(F("Error opening file"));
+      return false;
+    }
+    else
+    {
+      while (dataFile.available())
+      {
+        fileBuffer += char(dataFile.read());
+      }
+      dataFile.close(); 
+    }
+  }
+  // DEBUG STATEMENT
+  Serial.println(fileBuffer);
+  return true;
+}

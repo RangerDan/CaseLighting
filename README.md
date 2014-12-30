@@ -12,6 +12,14 @@ Hardware Requirements
 
 Software Requirements
 - Arduino IDE 1.0.6
+- Modified Pololu drivers for properly communicating with the Radio Shack Tricolor RGB LED Strip: https://github.com/RangerDan/RadioShackTricolorLEDStrip
+
+File Syntax
+- Color Definition File Syntax
+- Each line in the file that is used to define the color patterns uses the following syntax:
+<RED, 0-255>|<GREEN, 0-255>|<BLUE, 0-255>&[T<RED, 0-255>|<GREEN, 0-255>|<BLUE, 0-255>$]
+- Up to MAX_LED_COUNT worth of lines will be sent to the LED Strip even if they are not hooked up
+- Samples will be provided
 
 TODO
 - Instructions for preparing the strips for use in carriages
